@@ -37,49 +37,50 @@ func main() {
 		}
 	}()
 
-	func() {
+	for {
+		func() {
 
-	flag.StringVar(&host, "host", "irc.freenode.net:6667", "The IRC host:port to connect to. Defaults to irc.freenode.net:6667")
-	flag.StringVar(&nick, "nick", "minibot", "The IRC nick to use. Defaults to minibot")
-	flag.StringVar(&user, "user", "minibot", "The IRC user to use. Defaults to minibot")
-	flag.StringVar(&channel, "channel", "#minibot", "The IRC channel to join. Defaults to #minibot")
-	flag.StringVar(&database, "database", "minibot.db", "The sqlite database file. Defaults to minibot.db")
-	flag.BoolVar(&verbose, "verbose", false, "Be verbose")
-	flag.Parse()
+			flag.StringVar(&host, "host", "irc.freenode.net:6667", "The IRC host:port to connect to. Defaults to irc.freenode.net:6667")
+			flag.StringVar(&nick, "nick", "minibot", "The IRC nick to use. Defaults to minibot")
+			flag.StringVar(&user, "user", "minibot", "The IRC user to use. Defaults to minibot")
+			flag.StringVar(&channel, "channel", "#minibot", "The IRC channel to join. Defaults to #minibot")
+			flag.StringVar(&database, "database", "minibot.db", "The sqlite database file. Defaults to minibot.db")
+			flag.BoolVar(&verbose, "verbose", false, "Be verbose")
+			flag.Parse()
 
-	var err error
+			var err error
 
-	debug("connecting to irc")
-	con = irc.IRC(nick, user)
-	debug("opening sqlite database")
-	db, err = sqlite.Open(database)
-	if err != nil {
-		panic("An error occurred while opening the database: " + err.Error())
+			debug("connecting to irc")
+			con = irc.IRC(nick, user)
+			debug("opening sqlite database")
+			db, err = sqlite.Open(database)
+			if err != nil {
+				panic("An error occurred while opening the database: " + err.Error())
+			}
+			defer db.Close()
+
+			debug("if needed, initializing sqlite database")
+			err = db.Exec("create table if not exists messages (sender text, destination text, moment text, message text, primary key (sender, destination, moment))")
+			if err != nil {
+				panic("Could not initialize database: " + err.Error())
+			}
+
+			debug("connecting to irc server")
+			err = con.Connect(host)
+			if err != nil {
+				panic("An error occurred while connecting to irc: " + err.Error())
+			}
+			con.AddCallback("001", func(event *irc.Event) { con.Join(channel) })
+			con.AddCallback("311", func(event *irc.Event) { whoisReplies <- event.Message })
+			con.AddCallback("PRIVMSG", respond)
+			con.AddCallback("NOTICE", func(event *irc.Event) { debug(event.Message) })
+			con.AddCallback("NICK", messages)
+
+			debug("starting main loop")
+
+			con.Loop()
+		}()
 	}
-	defer db.Close()
-
-	debug("if needed, initializing sqlite database")
-	err = db.Exec("create table if not exists messages (sender text, destination text, moment text, message text, primary key (sender, destination, moment))")
-	if err != nil {
-		panic("Could not initialize database: " + err.Error())
-	}
-
-	debug("connecting to irc server")
-	err = con.Connect(host)
-	if err != nil {
-		panic("An error occurred while connecting to irc: " + err.Error())
-	}
-	con.AddCallback("001", func(event *irc.Event) { con.Join(channel) })
-	con.AddCallback("311", func(event *irc.Event) { whoisReplies <- event.Message})
-	con.AddCallback("PRIVMSG", respond)
-	con.AddCallback("NOTICE",func(event *irc.Event) { debug(event.Message)})
-	con.AddCallback("NICK",messages)
-
-	debug("starting main loop")
-
-	con.Loop()
-	}()
-
 }
 
 // helper function to print debug messages
@@ -132,6 +133,11 @@ func respond(event *irc.Event) {
 			{
 				reply(event, "!slap has been deprecated")
 			}
+		case "!error":
+			{
+				n := 0
+				fmt.Print("%d",1 / n)
+			}
 		case "!opme":
 			{
 				con.SendRaw("MODE " + channel + " +o " + event.Nick)
@@ -156,14 +162,13 @@ func isOnline(nick string) bool {
 	return false
 }
 
-
 // checks if a user has messages waiting
 func messages(event *irc.Event) {
 	nick := event.Nick
 	if event.Code == "NICK" {
 		nick = event.Message
 	}
-	st, err := db.Prepare("select sender, moment, message from messages where destination = '" + nick +"' ")
+	st, err := db.Prepare("select sender, moment, message from messages where destination = '" + nick + "' ")
 	if err != nil {
 		return
 	}
@@ -171,13 +176,13 @@ func messages(event *irc.Event) {
 	if err != nil {
 		return
 	}
-	for ; st.Next();  {
+	for st.Next() {
 		sender := ""
 		moment := ""
 		message := ""
 		st.Scan(&sender, &moment, &message)
-		reply(event, "On " + moment + ", " + sender + " said : " + message)
-		db.Exec("delete from messages where destination = '" + nick+ "' and sender = '" + sender+ "' and moment = '" + moment + "'")
+		reply(event, "On "+moment+", "+sender+" said : "+message)
+		db.Exec("delete from messages where destination = '" + nick + "' and sender = '" + sender + "' and moment = '" + moment + "'")
 	}
 }
 
@@ -190,19 +195,19 @@ func message(event *irc.Event) {
 	}
 	destination := args[1]
 	if isOnline(destination) {
-		reply(event, "Seems " + destination + " is online, why don't you just talk to him directly?")
+		reply(event, "Seems "+destination+" is online, why don't you just talk to him directly?")
 		return
 	}
 	message := ""
 	for i := 2; i < len(args); i++ {
 		message += args[i] + " "
 	}
-	err := db.Exec("insert into messages (sender,destination,message,moment) values ('" + event.Nick + "','" + destination + "','" + message + "','" + time.Now().Format("2006-01-02 15:04:05 MST")+ "')")
+	err := db.Exec("insert into messages (sender,destination,message,moment) values ('" + event.Nick + "','" + destination + "','" + message + "','" + time.Now().Format("2006-01-02 15:04:05 MST") + "')")
 	if err != nil {
-		reply(event,"An error occurred while saving the message: " + err.Error())
+		reply(event, "An error occurred while saving the message: "+err.Error())
 		return
 	}
-	reply(event,"The message has been saved")
+	reply(event, "The message has been saved")
 }
 
 // sets/updates the last seen time and message for a nick
