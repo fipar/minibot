@@ -2,7 +2,7 @@ all:
 	go build ircbot.go
 
 run:
-	./ircbot -nick minibottest -user minibottest -verbose
+	./ircbot -host localhost:6667 -channel '#bottest' -verbose
 
 clean: 
 	rm -f ircbot 

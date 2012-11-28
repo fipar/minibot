@@ -25,9 +25,19 @@ var (
 	verbose                             bool
 	seenNicks                           = map[string]seenRecord{}
 	startTime                           = time.Now()
+	whoisReplies                        = make(chan string, 1)
 )
 
 func main() {
+
+	defer func() {
+		if err := recover(); err != nil {
+			fmt.Println(err)
+			con.Privmsg(channel, "An error ocurred and should have been logged")
+		}
+	}()
+
+	func() {
 
 	flag.StringVar(&host, "host", "irc.freenode.net:6667", "The IRC host:port to connect to. Defaults to irc.freenode.net:6667")
 	flag.StringVar(&nick, "nick", "minibot", "The IRC nick to use. Defaults to minibot")
@@ -37,18 +47,19 @@ func main() {
 	flag.BoolVar(&verbose, "verbose", false, "Be verbose")
 	flag.Parse()
 
+	var err error
+
 	debug("connecting to irc")
 	con = irc.IRC(nick, user)
-
 	debug("opening sqlite database")
-	db, err := sqlite.Open(database)
+	db, err = sqlite.Open(database)
 	if err != nil {
 		panic("An error occurred while opening the database: " + err.Error())
 	}
 	defer db.Close()
 
 	debug("if needed, initializing sqlite database")
-	err = db.Exec("create table if not exists messages (sender text, destination text, message text, primary key (sender, destination))")
+	err = db.Exec("create table if not exists messages (sender text, destination text, moment text, message text, primary key (sender, destination, moment))")
 	if err != nil {
 		panic("Could not initialize database: " + err.Error())
 	}
@@ -59,18 +70,15 @@ func main() {
 		panic("An error occurred while connecting to irc: " + err.Error())
 	}
 	con.AddCallback("001", func(event *irc.Event) { con.Join(channel) })
-
+	con.AddCallback("311", func(event *irc.Event) { whoisReplies <- event.Message})
 	con.AddCallback("PRIVMSG", respond)
+	con.AddCallback("NOTICE",func(event *irc.Event) { debug(event.Message)})
+	con.AddCallback("NICK",messages)
 
 	debug("starting main loop")
 
-	defer func() {
-		if err := recover(); err != nil {
-			fmt.Println(err)
-			con.Privmsg(channel, "An error ocurred and should have been logged")
-		}
-	}()
 	con.Loop()
+	}()
 
 }
 
@@ -84,8 +92,9 @@ func debug(message string) {
 // Function to respond to PRIVMSG events. 
 func respond(event *irc.Event) {
 	see(event.Nick, event.Message)
+	messages(event)
 	op := strings.Split(event.Message, " ")[0]
-	if op[0] == '!' {
+	if len(op) > 1 && op[0] == '!' {
 		switch op {
 		case "!ping":
 			{
@@ -111,12 +120,89 @@ func respond(event *irc.Event) {
 			{
 				reply(event, "uptime: "+time.Since(startTime).String())
 			}
+		case "!message":
+			{
+				message(event)
+			}
+		case "!beer":
+			{
+				reply(event, "!beer has been deprecated")
+			}
+		case "!slap":
+			{
+				reply(event, "!slap has been deprecated")
+			}
+		case "!opme":
+			{
+				con.SendRaw("MODE " + channel + " +o " + event.Nick)
+			}
 		default:
 			{
 				reply(event, "Unknown command. Try !help")
 			}
 		}
 	}
+}
+
+// returns true if nick is online (that happens if whois <nick> gets back to the bot in under a second)
+func isOnline(nick string) bool {
+	con.SendRaw("WHOIS " + nick)
+	select {
+	case reply := <-whoisReplies:
+		return strings.Split(reply, " ")[0] == nick
+	case <-time.After(1 * time.Second):
+		return false
+	}
+	return false
+}
+
+
+// checks if a user has messages waiting
+func messages(event *irc.Event) {
+	nick := event.Nick
+	if event.Code == "NICK" {
+		nick = event.Message
+	}
+	st, err := db.Prepare("select sender, moment, message from messages where destination = '" + nick +"' ")
+	if err != nil {
+		return
+	}
+	err = st.Exec()
+	if err != nil {
+		return
+	}
+	for ; st.Next();  {
+		sender := ""
+		moment := ""
+		message := ""
+		st.Scan(&sender, &moment, &message)
+		reply(event, "On " + moment + ", " + sender + " said : " + message)
+		db.Exec("delete from messages where destination = '" + nick+ "' and sender = '" + sender+ "' and moment = '" + moment + "'")
+	}
+}
+
+// saves a message for a user
+func message(event *irc.Event) {
+	args := strings.Split(event.Message, " ")
+	if len(args) < 3 {
+		reply(event, "I need a destination and a message to do this. ")
+		return
+	}
+	destination := args[1]
+	if isOnline(destination) {
+		reply(event, "Seems " + destination + " is online, why don't you just talk to him directly?")
+		return
+	}
+	message := ""
+	for i := 2; i < len(args); i++ {
+		message += args[i] + " "
+	}
+	err := db.Exec("insert into messages (sender,destination,message,moment) values ('" + event.Nick + "','" + destination + "','" + message + "','" + time.Now().Format("2006-01-02 15:04:05 MST")+ "')")
+	if err != nil {
+		reply(event,"An error occurred while saving the message: " + err.Error())
+		return
+	}
+	reply(event,"The message has been saved")
 }
 
 // sets/updates the last seen time and message for a nick
@@ -140,9 +226,13 @@ func seen(event *irc.Event) {
 	}
 }
 
-// helper function to send a reply to a user
+// helper function to send a reply to a channel or user
 func reply(event *irc.Event, message string) {
-	con.Privmsg(event.Arguments[0], event.Nick+": "+message)
+	target := channel
+	if len(event.Arguments) > 0 {
+		target = event.Arguments[0]
+	}
+	con.Privmsg(target, message)
 }
 
 // sleeps for the specified amount of minutes, and then alerts the nick that invoked it, optionally printing a message
@@ -178,6 +268,7 @@ func printHelp(event *irc.Event) {
 		"!whoami : replies 'you are <nick>'",
 		"!countdown <i> [s]: sleeps i minutes and alerts you, optionally printing s",
 		"!seen <nick>: tells you the last time <nick> was seen by the bot",
+		"!message <nick> <text>: saves <text> for when <nick> is online",
 		"!uptime: prints the bot's uptime",
 		"!help : prints basic help"}
 	for _, v := range helpItems {
