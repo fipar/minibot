@@ -30,13 +30,14 @@ var (
 
 func main() {
 
-	defer func() {
-		if err := recover(); err != nil {
-			fmt.Println(err)
-			//con.Privmsg(channel, "An error ocurred and should have been logged")
-			main()
-		}
-	}()
+	debug("Main Function")
+
+	mainloop()
+}
+
+func mainloop() {
+
+	debug("mainloop Function")
 
 	flag.StringVar(&host, "host", "irc.freenode.net:6667", "The IRC host:port to connect to. Defaults to irc.freenode.net:6667")
 	flag.StringVar(&nick, "nick", "minibot", "The IRC nick to use. Defaults to minibot")
@@ -45,11 +46,6 @@ func main() {
 	flag.StringVar(&database, "database", "minibot.db", "The sqlite database file. Defaults to minibot.db")
 	flag.BoolVar(&verbose, "verbose", false, "Be verbose")
 	flag.Parse()
-
-	loop()
-}
-
-func loop() {
 
 	var err error
 
@@ -61,8 +57,10 @@ func loop() {
 		panic("An error occurred while opening the database: " + err.Error())
 	}
 	defer db.Close()
-
+	
 	debug("if needed, initializing sqlite database")
+	
+	
 	err = db.Exec("create table if not exists messages (sender text, destination text, moment text, message text, primary key (sender, destination, moment))")
 	if err != nil {
 		panic("Could not initialize database: " + err.Error())
@@ -91,12 +89,19 @@ func runBot() {
 // helper function to print debug messages
 func debug(message string) {
 	if verbose {
-		fmt.Println(message)
+		fmt.Println("DEBUG: " + message)
 	}
 }
 
 // Function to respond to PRIVMSG events. 
 func respond(event *irc.Event) {
+	
+    defer func() {
+        if r := recover(); r != nil {
+            fmt.Println("Recovered from respond")
+        }
+    }()
+
 	see(event.Nick, event.Message)
 	messages(event)
 	op := strings.Split(event.Message, " ")[0]
