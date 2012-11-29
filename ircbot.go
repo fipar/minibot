@@ -71,7 +71,10 @@ func mainloop() {
 	if err != nil {
 		panic("An error occurred while connecting to irc: " + err.Error())
 	}
-	con.AddCallback("001", func(event *irc.Event) { con.Join(channel) })
+	con.AddCallback("001", func(event *irc.Event) {
+		con.Join(channel) 
+		con.Privmsg(channel,"minibot starting, someone please op me")
+	})
 	con.AddCallback("311", func(event *irc.Event) { whoisReplies <- event.Message })
 	con.AddCallback("PRIVMSG", respond)
 	con.AddCallback("NOTICE", func(event *irc.Event) { debug(event.Message) })
@@ -98,7 +101,8 @@ func respond(event *irc.Event) {
 	
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Println("Recovered from respond")
+			debug("Recovered from " + r.(error).Error())
+			reply(event,"Whatever you just did, it almost makes me crash. ")
 		}
 	}()
 
