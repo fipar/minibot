@@ -96,11 +96,11 @@ func debug(message string) {
 // Function to respond to PRIVMSG events. 
 func respond(event *irc.Event) {
 	
-    defer func() {
-        if r := recover(); r != nil {
-            fmt.Println("Recovered from respond")
-        }
-    }()
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("Recovered from respond")
+		}
+	}()
 
 	see(event.Nick, event.Message)
 	messages(event)
