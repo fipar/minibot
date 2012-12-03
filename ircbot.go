@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/thoj/go-ircevent"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -30,14 +31,7 @@ var (
 
 func main() {
 
-	debug("Main Function")
-
-	mainloop()
-}
-
-func mainloop() {
-
-	debug("mainloop Function")
+	debug("starting bog")
 
 	flag.StringVar(&host, "host", "irc.freenode.net:6667", "The IRC host:port to connect to. Defaults to irc.freenode.net:6667")
 	flag.StringVar(&nick, "nick", "minibot", "The IRC nick to use. Defaults to minibot")
@@ -54,26 +48,25 @@ func mainloop() {
 	debug("opening sqlite database")
 	db, err = sqlite.Open(database)
 	if err != nil {
-		panic("An error occurred while opening the database: " + err.Error())
+		die("An error occurred while opening the database: " + err.Error())
 	}
 	defer db.Close()
-	
+
 	debug("if needed, initializing sqlite database")
-	
-	
+
 	err = db.Exec("create table if not exists messages (sender text, destination text, moment text, message text, primary key (sender, destination, moment))")
 	if err != nil {
-		panic("Could not initialize database: " + err.Error())
+		die("Could not initialize database: " + err.Error())
 	}
 
 	debug("connecting to irc server")
 	err = con.Connect(host)
 	if err != nil {
-		panic("An error occurred while connecting to irc: " + err.Error())
+		die("An error occurred while connecting to irc: " + err.Error())
 	}
 	con.AddCallback("001", func(event *irc.Event) {
-		con.Join(channel) 
-		con.Privmsg(channel,"minibot starting, someone please op me")
+		con.Join(channel)
+		con.Privmsg(channel, "minibot starting, someone please op me")
 	})
 	con.AddCallback("311", func(event *irc.Event) { whoisReplies <- event.Message })
 	con.AddCallback("PRIVMSG", respond)
@@ -85,8 +78,10 @@ func mainloop() {
 	con.Loop()
 }
 
-func runBot() {
-
+// so that I can do the same as panic() but without printing the stack trace to the user
+func die(message string) {
+	fmt.Println(message)
+	os.Exit(1)
 }
 
 // helper function to print debug messages
@@ -98,11 +93,11 @@ func debug(message string) {
 
 // Function to respond to PRIVMSG events. 
 func respond(event *irc.Event) {
-	
+
 	defer func() {
 		if r := recover(); r != nil {
 			debug("Recovered from " + r.(error).Error())
-			reply(event,"Whatever you just did, it almost makes me crash. ")
+			reply(event, "Whatever you just did, it almost makes me crash. ")
 		}
 	}()
 
